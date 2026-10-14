@@ -123,6 +123,14 @@ a.code { text-decoration: none; }
 .line { margin: 0 0 6px; line-height: 1.6; font-size: 15px; overflow-wrap: anywhere; }
 .line.bullet { padding-left: 18px; position: relative; }
 .line.bullet::before { content: ""; position: absolute; left: 4px; top: 0.7em; width: 5px; height: 5px; border-radius: 50%; background: var(--copper); }
+.line.entry { font-weight: 650; color: var(--ink); margin-top: 12px; }
+.profile-section h2 + .line.entry { margin-top: 0; }
+.line.bullet.sub { padding-left: 34px; color: var(--ink-2); }
+.line.bullet.sub::before { left: 20px; background: transparent; border: 1.5px solid var(--copper); width: 4px; height: 4px; }
+.table-wrap { overflow-x: auto; margin: 4px 0 10px; }
+.table-wrap table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.table-wrap th, .table-wrap td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.table-wrap th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; }
 .hidden-chip { display: inline-block; background: var(--ink); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; border-radius: 4px; padding: 0 6px; margin: 0 2px; vertical-align: 1px; }
 
 .side { display: grid; gap: 14px; position: sticky; top: 16px; }

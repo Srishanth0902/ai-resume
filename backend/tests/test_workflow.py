@@ -73,14 +73,20 @@ def test_institution_and_year_hiding_can_be_switched_off():
 @pytest.mark.parametrize(
     "line, key",
     [("PROFESSIONAL SUMMARY", "summary"), ("Work Experience:", "experience"), ("Skills: Python, SQL", "skills"),
-     ("Personal Details", "personal"), ("HOBBIES & INTERESTS", "hobbies"), ("LEADERSHIP", "other"),
+     ("Personal Details", "personal"), ("HOBBIES & INTERESTS", "hobbies"), ("HACKATHONS", "other"),
+     ("LEADERSHIP", "leadership"), ("Positions of Responsibility", "leadership"), ("Other Projects", "projects"),
+     ("Academic Achievements", "achievements"), ("Technical Skills and Certifications", "skills"),
+     ("Internship Experience", "experience"), ("Educational Qualification", "education"),
+     ("Programming Languages", "skills"), ("Languages Known", "languages"),
      ("FAMILY DETAILS", "personal")],
 )
 def test_heading_classification(line, key):
     assert classify_heading(line)[0] == key
 
 
-@pytest.mark.parametrize("line", ["Sales dashboard - Interactive analytics", "Software Intern, Nimbus Analytics", "Python"])
+@pytest.mark.parametrize("line", ["Sales dashboard - Interactive analytics", "Software Intern, Nimbus Analytics", "Python",
+                                  "Machine Learning – Online Certification", "• Built Machine Learning Projects",
+                                  "Head, Quality Management Team, Festember:"])
 def test_content_lines_are_not_headings(line):
     assert classify_heading(line) is None
 

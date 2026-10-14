@@ -60,6 +60,29 @@ HEADING_WORDS = {
     "your", "url", "id",
 }
 
+# Resume bullets start with action verbs; spaCy sometimes reads "Spearheaded Bag of Delight" as a name.
+ACTION_VERBS = {
+    "achieved", "addressed", "analyzed", "analysed", "architected", "assisted", "automated", "awarded", "built",
+    "championed", "collaborated", "completed", "conducted", "configured", "contributed", "coordinated", "created",
+    "delivered", "deployed", "designed", "developed", "directed", "drove", "enabled", "engineered", "enhanced",
+    "established", "evaluated", "executed", "facilitated", "founded", "generated", "guided", "handled", "headed",
+    "helped", "identified", "implemented", "improved", "increased", "initiated", "integrated", "introduced",
+    "launched", "led", "maintained", "managed", "mentored", "migrated", "mobilized", "modelled", "modeled",
+    "monitored", "optimized", "optimised", "organized", "organised", "oversaw", "participated", "partnered",
+    "planned", "planted", "presented", "produced", "programmed", "published", "ran", "received", "reduced",
+    "refactored", "researched", "resolved", "reviewed", "scaled", "secured", "selected", "served", "spearheaded",
+    "streamlined", "supervised", "supported", "taught", "tested", "trained", "translated", "volunteered", "won",
+    "worked", "wrote",
+}
+
+INSTITUTION_ABBRS = {"IIT", "NIT", "IIIT", "BITS", "VIT", "SRM", "IIM", "IISC", "JNTU", "JNTUH", "JNTUK", "MIT", "AIIMS"}
+
+COUNTRIES = {
+    "india", "usa", "u.s.", "u.s.a.", "united states", "america", "uk", "united kingdom", "england", "canada",
+    "australia", "germany", "france", "japan", "china", "singapore", "uae", "dubai", "nepal", "sri lanka",
+    "bangladesh", "pakistan", "europe", "asia", "africa", "ireland", "netherlands", "new zealand",
+}
+
 # Ordinary resume vocabulary. spaCy's small model often tags phrases such as "Machine Learning"
 # or "Isolation Forest" as PERSON; a real name never contains these words.
 COMMON_WORDS = {
@@ -130,7 +153,8 @@ RE_RELATIVE_NAME = re.compile(
     + _SEP + r"([^\n|]{2,60}?)[ \t]*$"
 )
 RE_RELATION_PREFIX = re.compile(r"\b([SDWC]/[Oo])\.?[ \t]+((?:[A-Z][\w.]*[ \t]?){1,4})")
-RE_TITLE = re.compile(r"\b(?:Mr|Mrs|Ms|Miss|Smt|Shri|Sri|Kumari|Kum)\.?(?=[ \t]+[A-Z])")
+# not "Sri"/"Shri": they start many Indian company and school names ("Sri Krishna Pharmaceuticals")
+RE_TITLE = re.compile(r"\b(?:Mr|Mrs|Ms|Miss|Smt|Kumari|Kum)\.?(?=[ \t]+[A-Z])")
 RE_PRONOUN = re.compile(r"\b(?i:he|she|him|her|his|hers|himself|herself)\b")
 RE_NAME_LABELLED = re.compile(
     r"(?im)^[ \t]*(?:[\-\u2022*\u25cf][ \t]*)?(?:full[ \t]+|candidate[ \t]+|applicant[ \t]+)?name"
@@ -145,8 +169,10 @@ RE_ADDRESS_LABELLED = re.compile(
 RE_PINCODE_CITY = re.compile(r"\b[A-Z][a-zA-Z]+[ \t]*[\-\u2013,][ \t]*\d{3}[ ]?\d{3}\b")
 RE_INSTITUTION = re.compile(
     r"\b(?:[A-Z][\w&.'\-]*[ \t]+){0,6}"
-    r"(?:University|College|Institute|School|Academy|Polytechnic|Vidyalaya|Vidyalayam)"
+    r"(?:University|College|Institute|School|Academy|Polytechnic|Vidyalaya|Vidyalayam|Kalasala|Kalashala"
+    r"|Mahavidyalaya|Vidyapeeth|Vidyapith|Vidyapeetham|Gurukul)"
     r"(?:[ \t]+(?:of|for)(?:[ \t]+(?:[A-Z][\w&.'\-]*|and|&)){1,6})?"
+    r"(?:,[ \t]*[A-Z][a-z]+(?![ \t]*[A-Z][a-z]))?"  # plus a trailing ", City"
 )
 RE_OTHER_DATE = re.compile(
     r"\b(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?[ \t]+(?:19|20)\d{2}"
@@ -346,12 +372,17 @@ def _classify_spacy(value: str, label: str, start: int) -> Detection | None:
         return None
     if all(t.lower().strip(".,") in HEADING_WORDS for t in tokens):
         return None
+    if any(t.strip(".,").upper() in INSTITUTION_ABBRS for t in tokens):
+        return None  # "NIT Trichy" is a college, not a person
     if label == "PERSON":
-        if _looks_like_name(value) and not any(t.lower().strip(".,") in COMMON_WORDS for t in tokens):
+        # one-word PERSON hits on resumes are mostly event or product names ("Festember")
+        if len(tokens) >= 2 and _looks_like_name(value) and not any(t.lower().strip(".,") in COMMON_WORDS | ACTION_VERBS for t in tokens):
             return Detection(value, "name", start, start + len(value), "spacy")
         return None
     if any(ch.isdigit() for ch in value) or len(value) < 3 or not value[0].isupper():
         return None
+    if label != "ORG" and value.lower() in COUNTRIES:
+        return None  # "across India" identifies nobody; hiding it only hurts readability
     category = "organization" if label == "ORG" else "location"
     return Detection(value, category, start, start + len(value), "spacy")
 

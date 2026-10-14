@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .detect import CATEGORIES, RE_INSTITUTION, Finding, build_matcher, normalize_term
+from .detect import CATEGORIES, RE_INSTITUTION, TECH_TERMS, Finding, build_matcher, normalize_term
 
 HIDDEN = "[hidden]"
 
@@ -47,18 +47,43 @@ SECTION_ALIASES = {
     "hobbies": ["hobbies", "interests", "hobbies and interests", "interests and hobbies", "personal interests"],
     "languages": ["languages", "languages known", "language proficiency", "linguistic proficiency"],
     "references": ["references", "referees", "reference"],
+    "leadership": ["positions of responsibility", "position of responsibility", "leadership",
+                   "leadership experience", "responsibilities", "leadership and responsibilities"],
     "activities": ["extracurricular activities", "extra curricular activities", "extracurricular",
                    "extra curricular", "co curricular activities", "activities", "volunteering",
-                   "volunteer experience", "positions of responsibility"],
+                   "volunteer experience"],
 }
 TITLES = {
     "summary": "Summary", "skills": "Skills", "experience": "Experience", "projects": "Projects",
-    "education": "Education", "certifications": "Certifications", "achievements": "Achievements",
-    "publications": "Publications", "strengths": "Strengths",
+    "leadership": "Leadership & Responsibilities", "education": "Education", "certifications": "Certifications",
+    "achievements": "Achievements", "publications": "Publications", "activities": "Activities",
+    "strengths": "Strengths",
 }
 KEPT = set(TITLES) | {"other"}
 ORDER = list(TITLES) + ["other"]
 ALIAS_TO_KEY = {alias: key for key, aliases in SECTION_ALIASES.items() for alias in aliases}
+# Keyword rules for headings that are not in the alias list ("Other Projects", "Academic
+# Achievements", "Technical Skills and Certifications" ...). First match wins, so the order matters.
+KEYWORD_RULES = [
+    ("personal", r"personal (?:detail|information|data|info|profile|particular)|bio ?data|other details"
+                 r"|additional (?:information|details)|family"),
+    ("contact", r"contact"),
+    ("declaration", r"declaration|signature"),
+    ("references", r"referen|referee"),
+    ("hobbies", r"hobb|interests"),
+    ("achievements", r"achiev|award|honou?r|scholarship|accomplish|recognition"),
+    ("projects", r"project"),
+    ("experience", r"experience|internship|employment|work history|career history"),
+    ("leadership", r"responsibilit|leadership|positions?\b"),
+    ("activities", r"extra ?curricular|co ?curricular|activit|volunteer|social work"),
+    ("skills", r"skill|competenc|technolog|tools|expertise|tech stack|programming|software|proficienc"),
+    ("languages", r"language"),
+    ("certifications", r"certif|course|training|licen"),
+    ("education", r"education|qualification|academic|schooling"),
+    ("summary", r"summary|objective|profile|about"),
+    ("publications", r"publication|research|paper"),
+    ("strengths", r"strength"),
+]
 PERSONAL_WORDS = re.compile(
     r"personal|contact|family|declaration|hobb|interest|language|reference|signature|photo|detail|religio|caste",
     re.I,
@@ -79,6 +104,8 @@ RE_YEAR_RANGE = re.compile(
 )
 RE_SINGLE_YEAR = re.compile(rf"\b(?:{_MONTH}[ \t]+)?(?:19|20)\d{{2}}\b|\b\d{{1,2}}/(?:19|20)\d{{2}}\b")
 RE_INSTITUTION_ABBR = re.compile(r"\b(?:IIT|NIT|IIIT|BITS|VIT|SRM|IIM|IISc|JNTU|JNTUH|JNTUK|MIT)\b(?:[ ,\-]+[A-Z][a-z]+)?")
+RE_BULLET = re.compile(r"^[•●▪◦\-–*]\s*")
+SMALL_WORDS = {"and", "of", "the", "in", "for", "&", "to", "on", "at", "with", "a", "an"}
 
 
 @dataclass
@@ -93,12 +120,36 @@ def _norm_heading(text: str) -> str:
     return " ".join(text.split())
 
 
+def _keyword_key(text: str):
+    norm = _norm_heading(text)
+    for key, pattern in KEYWORD_RULES:
+        if re.search(pattern, norm):
+            return key
+    return None
+
+
+def _looks_like_heading(text: str) -> bool:
+    """Short, title-like and not a sentence: "Other Projects", "TECHNICAL SKILLS:"."""
+    t = text.strip().rstrip(":").strip()
+    words = t.split()
+    if not 1 <= len(words) <= 6 or len(t) > 50:
+        return False
+    if re.search(r"[\d,|.;!?()]|\s[-–—]\s", t):
+        return False
+    if t.isupper():
+        return True
+    return all(w[0].isupper() or w.lower() in SMALL_WORDS or not w[0].isalpha() for w in words)
+
+
 def classify_heading(line: str):
     """Return (key, title, rest-of-line) if the line starts a section."""
+    if RE_BULLET.match(line.strip()):
+        return None  # a bulleted line is content, never a heading
     stripped = line.strip().strip("•*#=_●▪").strip()
     if not stripped or len(stripped) > 70:
         return None
-    candidates = [(stripped, "")]
+    # "Contact: +91 ..." normalises to "contact"; only a label-like line may match as a whole
+    candidates = [] if re.search(r"[\d@]", stripped) else [(stripped, "")]
     m = re.match(r"^([A-Za-z &/'’]{3,40}?)[ \t]*(?::|\||[\-–—][ \t])[ \t]*(.*)$", stripped)
     if m:
         candidates.append((m.group(1), m.group(2)))
@@ -106,8 +157,13 @@ def classify_heading(line: str):
         key = ALIAS_TO_KEY.get(_norm_heading(head))
         if key:
             return key, head.strip(" :"), rest.strip()
-    # an unrecognised ALL-CAPS heading such as "LEADERSHIP"
-    if re.fullmatch(r"[A-Z][A-Z &/'’]{2,40}:?", stripped) and len(stripped.split()) <= 4:
+    if _looks_like_heading(stripped):
+        key = _keyword_key(stripped)
+        if key:
+            return key, stripped.rstrip(":").strip(), ""
+    # an unrecognised ALL-CAPS heading such as "HACKATHONS" (but not a skill like "SQL" or "AWS")
+    if (re.fullmatch(r"[A-Z][A-Z &/'’]{2,40}:?", stripped) and len(stripped.split()) <= 4
+            and stripped.rstrip(":").lower() not in TECH_TERMS and len(stripped.rstrip(":")) >= 5):
         title = stripped.rstrip(":").title()
         return ("personal" if PERSONAL_WORDS.search(stripped) else "other"), title, ""
     return None
@@ -131,6 +187,10 @@ def split_sections(text: str):
         heading = classify_heading(line)
         if heading and heading[0] == "other" and current is None:
             heading = None  # an ALL-CAPS line in the header block is a name or title, not a section
+        if heading and current is None and heading[2] and heading[0] not in KEPT:
+            heading = None  # "Contact: +91 ..." in the header block is a detail line, not a section
+        if heading and current is not None and heading[0] == current["key"] and not heading[2]:
+            heading = None  # a sub-heading such as "Sport Activities:" inside Extracurricular Activities
         if heading:
             key, title, rest = heading
             title = title.title() if title.isupper() else title
@@ -148,8 +208,19 @@ def split_sections(text: str):
 
 
 class Scrubber:
-    def __init__(self, text: str, findings: list[Finding], options: ProfileOptions):
-        terms = {f.text: f.category for f in findings if f.category in SCRUB_CATEGORIES}
+    def __init__(self, text: str, findings: list[Finding], options: ProfileOptions, header_text: str = ""):
+        header_text = header_text.lower()
+
+        def wanted(f: Finding) -> bool:
+            if f.category not in SCRUB_CATEGORIES:
+                return False
+            # spaCy's place guesses in the body are often event or NGO names ("Choreonite");
+            # hide them only when the same place also sits in the personal header block
+            if f.category == "location" and f.sources == ["spacy"]:
+                return f.text.lower() in header_text
+            return True
+
+        terms = {f.text: f.category for f in findings if wanted(f)}
         if options.hide_institutions:
             for rx in (RE_INSTITUTION, RE_INSTITUTION_ABBR):
                 for m in rx.finditer(text):
@@ -183,6 +254,7 @@ class Scrubber:
 def _split_skills(lines: list[str]) -> list[str]:
     skills: list[str] = []
     for line in lines:
+        line = RE_BULLET.sub("", line)
         if ":" in line and len(line.split(":", 1)[0]) < 30:
             line = line.split(":", 1)[1]
         for part in re.split(r"[,•|;·●▪\t]|\s{2,}|\s[-–]\s", line):
@@ -192,12 +264,29 @@ def _split_skills(lines: list[str]) -> list[str]:
     return skills
 
 
+def _reroute_labelled_lines(sections: list[dict]) -> list[dict]:
+    """A skills block often carries "Certifications: ..." or "Languages: ..." rows; give each its own section."""
+    out: list[dict] = []
+    for s in sections:
+        keep = {**s, "lines": []}
+        out.append(keep)
+        for line in s["lines"]:
+            m = re.match(r"^(?:[•●▪◦\-–*]\s*)?([A-Za-z &/'’]{3,40}?)\s*:\s*(.+)$", line)
+            key = _keyword_key(m.group(1)) if m and s["key"] == "skills" else None
+            if key and key not in ("skills", s["key"]):
+                out.append({"key": key, "title": TITLES.get(key, m.group(1).strip()), "lines": [m.group(2).strip()]})
+            else:
+                keep["lines"].append(line)
+    return out
+
+
 def build_profile(text: str, findings: list[Finding], options: ProfileOptions | None = None,
                   image_count: int = 0):
     """-> (profile, identity). The profile is safe to show before a decision; identity is not."""
     options = options or ProfileOptions()
     header, sections = split_sections(text)
-    scrub = Scrubber(text, findings, options)
+    sections = _reroute_labelled_lines(sections)
+    scrub = Scrubber(text, findings, options, "\n".join(header))
 
     # The header holds name + contact lines; keep only a job headline such as "Python Developer".
     headline_parts, header_hidden = [], []
@@ -273,7 +362,8 @@ def _identity(findings: list[Finding], header: list[str], header_hidden: list[st
         "emails": values("email"),
         "phones": values("phone"),
         "links": values("url"),
-        "locations": [v for v in values("location") if len(v) > 2],
+        # only places from the dropped header / personal blocks, not event names spaCy guessed in the text
+        "locations": [v for v in values("location") if len(v) > 2 and v.lower() in hidden_text],
         "details": others,
         "header": header_hidden,
         "hidden_sections": hidden_sections,

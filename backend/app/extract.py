@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import io
+import re
 from dataclasses import dataclass, field
 
 import pymupdf as fitz
 from docx import Document
 from docx.oxml.ns import qn
+
+from .pdf_layout import RE_DATE_CELL, document_lines
 
 MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
 
@@ -58,11 +61,16 @@ def _extract_pdf(data: bytes) -> Extraction:
     if doc.needs_pass:
         raise UnsupportedFile("The PDF is password protected. Remove the password and try again.")
 
-    pages, images = [], 0
+    images = 0
     for page in doc:
-        pages.append(page.get_text("text").strip())
         images += sum(1 for info in page.get_image_info() if _is_photo_sized(info["bbox"], page.rect))
-    text = "\n\n".join(p for p in pages if p)
+    try:
+        # reading order rebuilt from the page geometry (tables, columns, bullets, footers)
+        text = "\n".join(document_lines(doc)).strip()
+    except Exception:
+        text = ""
+    if not text:
+        text = "\n\n".join(p.get_text("text").strip() for p in doc).strip()
 
     result = Extraction(text=text, kind="pdf", page_count=doc.page_count, image_count=images)
     if not text.strip():
@@ -121,6 +129,37 @@ def paragraph_text_nodes(p) -> list:
     return [t for t in p.iter(qn("w:t")) if _owner_paragraph(t) is p]
 
 
+def _paragraph_display_text(p) -> str:
+    """Paragraph text with tabs as gaps and list bullets made visible ("• ", "◦ " for nested)."""
+    parts = []
+    for node in p.iter(qn("w:t"), qn("w:tab"), qn("w:br")):
+        if _owner_paragraph(node) is not p or node.getparent().tag == qn("w:tabs"):
+            continue  # nested text box, or a tab-stop definition rather than a tab character
+        if node.tag == qn("w:t"):
+            parts.append(node.text or "")
+        else:
+            parts.append(" | " if node.tag == qn("w:tab") else " ")
+    text = re.sub(r"(\s*\|\s*)+", " | ", "".join(parts)).strip(" |")
+    text = " ".join(text.split())
+    if " | " in text:  # "Software Intern | Jun 2025" -> "Software Intern (Jun 2025)"
+        head, _, tail = text.rpartition(" | ")
+        if RE_DATE_CELL.match(tail) and head:
+            text = f"{head.rstrip(' :|')} ({tail.strip('()')})"
+    ppr = p.find(qn("w:pPr"))
+    if text and ppr is not None:
+        num = ppr.find(qn("w:numPr"))
+        style = ppr.find(qn("w:pStyle"))
+        is_list = num is not None or (style is not None and "list" in (style.get(qn("w:val")) or "").lower())
+        if is_list:
+            ilvl = num.find(qn("w:ilvl")) if num is not None else None
+            level = int(ilvl.get(qn("w:val"), "0")) if ilvl is not None else 0
+            style_level = re.search(r"(\d)$", style.get(qn("w:val")) or "") if style is not None else None
+            if style_level and int(style_level.group(1)) >= 2:  # "List Bullet 2" keeps its level in the style
+                level = max(level, int(style_level.group(1)) - 1)
+            text = ("◦ " if level > 0 else "• ") + text
+    return text
+
+
 def docx_lines(root) -> list[str]:
     """Paragraph text in document order; table rows are joined with ' | '."""
     lines: list[str] = []
@@ -128,7 +167,7 @@ def docx_lines(root) -> list[str]:
     for p in root.iter(qn("w:p")):
         if any(a.tag == MC_FALLBACK for a in p.iterancestors()):
             continue  # duplicate copy of a text box kept for old Word versions
-        text = "".join(t.text or "" for t in paragraph_text_nodes(p))
+        text = _paragraph_display_text(p)
         row = next(p.iterancestors(qn("w:tr")), None)
         if row is not current_row and current_row is not None:
             lines.append(" | ".join(c.strip() for c in row_cells.values() if c.strip()))

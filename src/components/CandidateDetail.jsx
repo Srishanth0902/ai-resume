@@ -4,20 +4,79 @@ import { blindPdfUrl, decide, deleteCandidate, formatDate, getCandidate, origina
 const PIPELINE = ["Blind screening", "Interview", "Offer", "Hired"];
 const NEXT_STAGES = ["Interview", "Offer", "Hired", "Closed"];
 
-function Line({ text }) {
-  const bullet = /^[-•*●▪–]\s*/.test(text);
-  const clean = bullet ? text.replace(/^[-•*●▪–]\s*/, "") : text;
-  const parts = clean.split("[hidden]");
+const TOP_BULLET = /^[-•*●▪–]\s*/;
+const SUB_BULLET = /^◦\s*/;
+// a role/project title: ends with a date in brackets "(Jun 2025)" / "(Sep 2024 – Present)", or with ":"
+const ENTRY_TITLE = /(\([^()]*(\d{4}|present|current)[^()]*\)|:)$/i;
+
+function WithHidden({ text }) {
+  const parts = text.split("[hidden]");
+  return parts.map((p, i) => (
+    <span key={i}>
+      {p}
+      {i < parts.length - 1 && <span className="hidden-chip" title="Personal detail hidden for blind review">hidden</span>}
+    </span>
+  ));
+}
+
+function Line({ text, nested }) {
+  let kind = "line";
+  let clean = text;
+  if (SUB_BULLET.test(text)) {
+    kind = "line bullet sub";
+    clean = text.replace(SUB_BULLET, "");
+  } else if (TOP_BULLET.test(text)) {
+    clean = text.replace(TOP_BULLET, "");
+    // when a section has sub-points, its top-level bullets are the entry titles they belong to
+    kind = nested || ENTRY_TITLE.test(clean) ? "line entry" : "line bullet";
+  } else if (ENTRY_TITLE.test(text) && text.length < 140) {
+    kind = "line entry";
+  }
   return (
-    <p className={bullet ? "line bullet" : "line"}>
-      {parts.map((p, i) => (
-        <span key={i}>
-          {p}
-          {i < parts.length - 1 && <span className="hidden-chip" title="Personal detail hidden for blind review">hidden</span>}
-        </span>
-      ))}
+    <p className={kind}>
+      <WithHidden text={clean} />
     </p>
   );
+}
+
+const isTableRow = (l) => (l.match(/ \| /g) || []).length >= 2;
+
+function Table({ rows }) {
+  const cells = rows.map((r) => r.split(" | "));
+  const header = !/\d/.test(rows[0]) && cells.length > 1;
+  const body = header ? cells.slice(1) : cells;
+  return (
+    <div className="table-wrap">
+      <table>
+        {header && (
+          <thead>
+            <tr>{cells[0].map((c, i) => <th key={i}>{c}</th>)}</tr>
+          </thead>
+        )}
+        <tbody>
+          {body.map((r, i) => (
+            <tr key={i}>{r.map((c, j) => <td key={j}><WithHidden text={c} /></td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SectionBody({ lines }) {
+  const nested = lines.some((l) => SUB_BULLET.test(l));
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (isTableRow(lines[i])) {
+      const rows = [];
+      while (i < lines.length && isTableRow(lines[i])) rows.push(lines[i++]);
+      i--;
+      out.push(<Table key={`t${i}`} rows={rows} />);
+    } else {
+      out.push(<Line key={i} text={lines[i]} nested={nested} />);
+    }
+  }
+  return out;
 }
 
 function Profile({ candidate }) {
@@ -57,7 +116,7 @@ function Profile({ candidate }) {
               ))}
             </div>
           ) : (
-            s.lines.map((l, i) => <Line key={i} text={l} />)
+            <SectionBody lines={s.lines} />
           )}
         </section>
       ))}
