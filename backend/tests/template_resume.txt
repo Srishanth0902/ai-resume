@@ -1,0 +1,21 @@
+YOUR NAME
+AI/ML STUDENT | PYTHON | DATA ANALYTICS
+City, India | +91 XXXXX XXXXX | youremail@example.com | LinkedIn: YOUR URL
+PROFESSIONAL SUMMARY
+Computer Science student specializing in AI and Machine Learning, with a foundation in Python, data analysis, and machine learning concepts. Interested in building practical AI solutions and Machine Learning systems through collaborative projects.
+SKILLS
+Python • Machine Learning Fundamentals • Pandas & NumPy • Data Cleaning • SQL Basics • Git & GitHub
+PROJECTS
+Smart Meter Anomaly Detection – Built a student-level anomaly detection prototype using Isolation Forest to flag unusual smart-meter readings and summarize potential irregularities.
+Exploratory Data Analysis – Analyzed a sample dataset with Python to identify missing values, summarize trends, and present findings using charts.
+EXPERIENCE
+Academic and personal projects
+Built Machine Learning models in Python as part of coursework; she presented results to her faculty mentor.
+EDUCATION
+B.Tech in Computer Science, Your College Name, City | 2022 – 2026 | CGPA: X.XX
+CERTIFICATIONS
+Machine Learning – Online Certification
+LANGUAGES
+English, Hindi, Telugu
+DECLARATION
+I hereby declare that the information above is true.
