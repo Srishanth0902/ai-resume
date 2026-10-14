@@ -55,7 +55,7 @@ Run the tests from `backend`: `pip install -r requirements-dev.txt`, then `pytho
 
 | Service    | Root        | Public path | What it is                                        |
 |------------|-------------|-------------|---------------------------------------------------|
-| `frontend` | `frontend/` | `/`         | Vite build of the React app (static)              |
+| `frontend` | `.` (repo root) | `/`     | Vite build of the React app (static); in the GitHub repo the frontend files sit at the root |
 | `backend`  | `backend/`  | `/api/*`    | FastAPI (`app.main:app`) as a Python function     |
 
 The browser calls `/api/...` on the same origin, so no CORS or service bindings are needed. The
