@@ -127,6 +127,10 @@ a.code { text-decoration: none; }
 .profile-section h2 + .line.entry { margin-top: 0; }
 .line.bullet.sub { padding-left: 34px; color: var(--ink-2); }
 .line.bullet.sub::before { left: 20px; background: transparent; border: 1.5px solid var(--copper); width: 4px; height: 4px; }
+.skill-rows { display: grid; gap: 8px; }
+.skill-row { display: grid; grid-template-columns: 130px 1fr; gap: 10px; align-items: start; }
+.skill-label { font-size: 13px; font-weight: 700; color: var(--ink-2); padding-top: 3px; }
+@media (max-width: 600px) { .skill-row { grid-template-columns: 1fr; gap: 4px; } }
 .table-wrap { overflow-x: auto; margin: 4px 0 10px; }
 .table-wrap table { border-collapse: collapse; width: 100%; font-size: 14px; }
 .table-wrap th, .table-wrap td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }

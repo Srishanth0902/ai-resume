@@ -158,3 +158,92 @@ def make_two_column_pdf() -> bytes:
             right.para(210, text, size=10)
         right.y += 8
     return doc.tobytes()
+
+
+def make_caps_entries_pdf() -> bytes:
+    """Deedy-style: section headings AND entries are ALL CAPS; only font size/weight tells them apart.
+    Also an unknown "LINKS" section full of social handles, an unknown "MY LIFE PHILOSOPHY" section
+    in heading style, a superscript ordinal and a word hyphenated at the end of a line."""
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    w = _Writer(page, 50, right=545)
+
+    def head(s):  # section heading: 15pt regular capitals
+        w.y += 8
+        w.text(40, w.y, s, size=15)
+        w.y += 20
+
+    def entry(s):  # entry title: 10.5pt bold capitals
+        w.text(40, w.y, s, size=10.5, bold=True)
+        w.y += 15
+
+    w.text(40, w.y, "MEERA IYER", size=24, bold=True)
+    w.y += 18
+    w.text(40, w.y, "meera.iyer@example.com | +91 90000 11111", size=10)
+    w.y += 14
+    head("EDUCATION")
+    entry("STATE UNIVERSITY OF EXAMPLE")
+    w.text(40, w.y, "MSc in Data Science, GPA 3.9/4.0")
+    w.y += 16
+    head("EXPERIENCE")
+    entry("ORBITAL LABS | DATA ENGINEER")
+    # a full-width line that ends in a word hyphenated with a soft hyphen ("analyt-" + "ics")
+    first = "Built streaming pipelines processing 4 million events a day with Kafka and Spark for the analyt­"
+    w.text(42, w.y, "•")
+    w.text(55, w.y, first)
+    w.y += 14.5
+    w.text(55, w.y, "ics team and three downstream products.")
+    w.y += 16
+    head("AWARDS")
+    # "1st" with a raised, smaller "st"
+    w.text(40, w.y, "1", size=10.5)
+    w.text(46, w.y - 3.5, "st", size=7)
+    w.text(56, w.y, "place, Regional Data Hackathon", size=10.5)
+    w.y += 16
+    head("SKILLS")
+    entry("PROGRAMMING")
+    w.text(40, w.y, "Python, Scala, SQL")
+    w.y += 16
+    entry("GRADUATE COURSEWORK")
+    w.text(40, w.y, "Distributed Systems, Statistical Learning")
+    w.y += 16
+    head("LINKS")
+    for handle in ("GitHub: @meera_iyer", "Twitter: @meeraiyer42", "Blog: meeraiyer.example.dev"):
+        w.text(40, w.y, handle)
+        w.y += 14
+    head("MY LIFE PHILOSOPHY")
+    w.text(40, w.y, "Measure twice, ship once.")
+    return doc.tobytes()
+
+
+def make_date_strip_pdf() -> bytes:
+    """Harvard-style: every date sits in a right-aligned strip beside its entry (not a second column)."""
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    w = _Writer(page, 60, right=545)
+    w.text(40, w.y, "Arjun Rao", size=20, bold=True)
+    w.y += 26
+    entries = [
+        ("Experience", [("Fintech Labs, Backend Engineer", "June 2023 - present",
+                         "Rebuilt the payments ledger in Go, handling 3,000 transactions per second."),
+                        ("Cloudlet, Software Intern", "May 2022 - Aug 2022",
+                         "Added request tracing across 40 microservices with OpenTelemetry."),
+                        ("Datawise, Analytics Intern", "May 2021 - Aug 2021",
+                         "Automated weekly KPI reports with Python and SQL.")]),
+        ("Projects", [("Ledger Visualiser", "Jan 2023 - present", "Open-source tool to explore double-entry books."),
+                      ("Rate Limiter", "Jan 2021", "Token-bucket rate limiter library in Rust.")]),
+        ("Education", [("Princeton University, BS in Computer Science - Princeton, NJ", "Sept 2017 - May 2021",
+                        "GPA: 3.8/4.0, Fulbright Scholarship recipient")]),
+    ]
+    for heading, items in entries:
+        w.y += 6
+        w.text(40, w.y, heading, size=13, bold=True)
+        w.y += 18
+        for title, date, detail in items:
+            w.text(40, w.y, title, bold=True)
+            w.text(545 - fitz.get_text_length(date, "helv", 10.5), w.y, date)
+            w.y += 15
+            w.text(55, w.y, "•")
+            w.text(65, w.y, detail)
+            w.y += 18
+    return doc.tobytes()

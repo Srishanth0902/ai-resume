@@ -27,7 +27,9 @@ RE_BULLET_ALONE = re.compile(rf"^[{re.escape(BULLET_CHARS)}o�
 RE_BULLET_PREFIX = re.compile(rf"^(?:[{re.escape(BULLET_CHARS)}‣]|o(?=\s+\S))\s*")
 _MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?"
 _POINT = rf"(?:{_MONTH}\s*'?\d{{2,4}}|\d{{1,2}}/\d{{2,4}}|(?:19|20)\d{{2}}|[Pp]resent|[Cc]urrent|[Nn]ow|[Oo]ngoing|[Tt]ill\s+[Dd]ate)"
-RE_DATE_CELL = re.compile(rf"^\(?{_POINT}(?:\s*(?:[-–—]|to)\s*{_POINT})?\)?$")
+ICON_FONT = re.compile(r"awesome|fontello|icomoon|material.?(icons|symbols)|academicons|marvosym|dingbat|wingding"
+                       r"|webdings|ionicons|bootstrap.?icons|symbolicons|\bicons?\b", re.I)
+RE_DATE_CELL = re.compile(rf"^\(?{_POINT}(?:\s*(?:[-–—·]|to)\s*{_POINT})?\)?$")
 
 
 @dataclass
@@ -39,6 +41,7 @@ class Item:
     text: str
     size: float = 10.0
     table: bool = False
+    bold: bool = False
 
     @property
     def yc(self) -> float:
@@ -61,6 +64,7 @@ class Row:
     y0: float = 0.0
     y1: float = 0.0
     size: float = 10.0
+    bold: bool = False
     furniture_key: str = field(default="", repr=False)
 
 
@@ -83,30 +87,53 @@ def _span_items(page) -> list[Item]:
             for s in spans[1:]:
                 prev = group[-1]
                 if s["bbox"][0] - prev["bbox"][2] > 2.5 * max(prev["size"], 6):
-                    items.append(_item_from_spans(group))
+                    items.extend(i for i in [_item_from_spans(group)] if i.text)
                     group = [s]
                 else:
                     group.append(s)
-            items.append(_item_from_spans(group))
+            items.extend(i for i in [_item_from_spans(group)] if i.text)
     return items
 
 
 def _item_from_spans(spans) -> Item:
     parts = []
     for i, s in enumerate(spans):
-        text = s["text"]
-        if i and s["bbox"][0] - spans[i - 1]["bbox"][2] > 0.15 * s["size"] and not parts[-1].endswith(" ") \
-                and not text.startswith(" "):
-            parts.append(" ")
+        # icon fonts (FontAwesome phone/mail/LinkedIn/GitHub symbols) render as junk letters such as
+        # "ï" or "§"; they work as separators between contact details
+        # (longer runs in an icon font are accessibility labels such as "mailto:" and are kept)
+        text = " | " if ICON_FONT.search(s.get("font", "")) and len(s["text"].strip()) <= 2 else s["text"]
+        if i:
+            gap = s["bbox"][0] - spans[i - 1]["bbox"][2]
+            raised = abs(s["origin"][1] - spans[i - 1]["origin"][1]) > 0.15 * max(s["size"], spans[i - 1]["size"])
+            # only the smaller, raised run is glued on ("1" + "st"); the text after it ("place") is not
+            if raised and gap < 0.5 * s["size"] and s["size"] < spans[i - 1]["size"] - 0.5:
+                parts.append(text.strip())  # superscript or subscript, e.g. the "st" of "1st"
+                continue
+            touching = gap <= 0.15 * s["size"] and not parts[-1].endswith(" ") and not text.startswith(" ")
+            if gap < -1 or (touching and abs(s["size"] - spans[i - 1]["size"]) >= 1):
+                # overlapping runs, or a size change with no space ("...Vision" + "1st Prize"): text that
+                # overflowed into a right-aligned field
+                parts.append(" | ")
+            elif gap > 0.15 * s["size"] and not parts[-1].endswith(" ") and not text.startswith(" "):
+                parts.append(" ")
         parts.append(text)
     x0 = min(s["bbox"][0] for s in spans)
     y0 = min(s["bbox"][1] for s in spans)
     x1 = max(s["bbox"][2] for s in spans)
     y1 = max(s["bbox"][3] for s in spans)
     size = max(s["size"] for s in spans)
+    lettered = [sp for sp in spans if any(ch.isalpha() for ch in sp["text"])] or spans
+    bold = all(_is_bold(sp) for sp in lettered)
     # a run of spaces inside one span is a visual gap ("Department:          May 2026 – Present")
     text = re.sub(r"\s{4,}", " | ", "".join(parts).strip())
-    return Item(x0, y0, x1, y1, " ".join(text.split()), size)
+    text = re.sub(r"(\s*\|\s*)+", " | ", text).strip(" |")
+    text = re.sub(r"\s­\s", " – ", text)  # a lone soft hyphen used as a dash: "Sep. 2023 ­ Mar. 2024"
+    return Item(x0, y0, x1, y1, " ".join(text.split()), size, bold=bold)
+
+
+def _is_bold(span) -> bool:
+    return bool(span.get("flags", 0) & 16) or bool(
+        re.search(r"bold|black|heavy|semibold|demi|cmbx", span.get("font", ""), re.I))
 
 
 def _table_items(page) -> tuple[list[Item], list[fitz.Rect]]:
@@ -174,6 +201,7 @@ def _finish_row(row: Row) -> None:
     row.x0, row.x1 = min(i.x0 for i in items), max(i.x1 for i in items)
     row.y0, row.y1 = min(i.y0 for i in items), max(i.y1 for i in items)
     row.size = max(i.size for i in items)
+    row.bold = all(i.bold for i in items if not i.table)
     if row.table:
         row.text, row.text_x0 = items[0].text, row.x0
         return
@@ -227,6 +255,10 @@ def _gutter(items: list[Item], width: float):
     crossing, x, left, right = best
     if crossing > 0.06 * len(text_items):
         return None
+    # a strip of right-aligned dates ("Sept 2018 – May 2023") beside the entries is not a column
+    for side in (left, right):
+        if sum(bool(RE_DATE_CELL.match(i.text.strip())) for i in side) >= 0.5 * len(side):
+            return None
 
     def span(group):
         return max(i.y1 for i in group) - min(i.y0 for i in group)
@@ -276,19 +308,26 @@ def _join_wrapped(rows: list[Row], width: float) -> list[Row]:
     text_rows = [r for r in rows if not r.table]
 
     def column_bounds(row: Row) -> tuple[float, float]:
-        # the column this row sits in (sidebars, name blocks and main columns differ)
+        # the column this row sits in (sidebars, name blocks and main columns differ); its right
+        # margin is where most long lines end, not the one title that overflowed past it
         same = [r for r in text_rows if row.x0 - 30 <= r.x0 <= row.x0 + 60]
-        return min(r.x0 for r in same), max(r.x1 for r in same)
+        ends = sorted(r.x1 for r in same)
+        right = ends[int(0.85 * (len(ends) - 1))] if len(ends) >= 5 else ends[-1]
+        return min(r.x0 for r in same), right, ends[-1]
 
     def wrapped(prev: Row, row: Row) -> bool:
         if re.match(r"^[A-Za-z][\w .'/&-]{0,25}\s*:", row.text):
             return False  # "Gender: Female", "E-mail : ..." are separate detail lines
-        left, right = column_bounds(prev)
-        if right - left < 0.4 * width:
+        left, right, widest = column_bounds(prev)
+        if widest - left < 0.4 * width:
             return False  # narrow blocks (name block, sidebar) hold lists, not paragraphs
+        if row.bold != prev.bold:
+            return False  # a bold title or heading after a plain paragraph starts something new
+        if re.search(r"[.!?]$", prev.text) and row.x1 - row.x0 < 0.4 * (widest - left) and not row.text.endswith("."):
+            return False  # a short line after a finished sentence: a title, not a continuation
         # the line wrapped if the next line's first word would not have fitted after it
         first_word = row.text.split(" ", 1)[0]
-        needed = (len(first_word) + 1) * 0.45 * row.size
+        needed = (len(first_word) + 1) * 0.5 * row.size
         return prev.x1 + needed >= right - 2
 
     out: list[Row] = []
@@ -303,7 +342,12 @@ def _join_wrapped(rows: list[Row], width: float) -> list[Row]:
             and prev.x0 - 2 <= row.x0 <= prev.text_x0 + 1.5 * row.size  # continues at the text indent
             and not re.search(r"\([^)]*\)$|\|", prev.text)            # not a title row with a date
         ):
-            prev.text = f"{prev.text} {row.text}"
+            if prev.text.endswith("­"):  # word hyphenated at the line end: "Con-" + "sul"
+                prev.text = prev.text[:-1] + row.text
+            elif re.search(r"[a-z]-$", prev.text) and row.text[:1].islower():
+                prev.text = prev.text[:-1] + row.text  # automatic hyphenation: "analyt-" + "ics"
+            else:
+                prev.text = f"{prev.text} {row.text}"
             prev.x1 = row.x1  # the merged paragraph now ends where its last line ends
             prev.y1 = row.y1
             continue
@@ -323,6 +367,11 @@ RE_PAGE_NUMBER = re.compile(r"^(?:page\s*)?#(?:\s*(?:of|/)\s*#)?$")
 
 def document_lines(doc) -> list[str]:
     """Reading-order lines for the whole document, page breaks as blank lines."""
+    return [text for text, _ in document_rows(doc)]
+
+
+def document_rows(doc) -> list[tuple[str, tuple | None]]:
+    """Like document_lines, with each line's (font size, bold) style; None for page breaks."""
     pages: list[tuple[fitz.Rect, list[Row]]] = []
     for page in doc:
         table_items, boxes = _table_items(page)
@@ -342,7 +391,7 @@ def document_lines(doc) -> list[str]:
                 counts[r.furniture_key] = counts.get(r.furniture_key, 0) + 1
     repeated = {k for k, n in counts.items() if n >= 2 and len(pages) >= 2}
 
-    lines: list[str] = []
+    lines: list[tuple[str, tuple | None]] = []
     for rect, rows in pages:
         kept = [
             r for r in rows
@@ -357,6 +406,6 @@ def document_lines(doc) -> list[str]:
                 if r.bullet and r.x0 > outer + 8 and r.text.startswith("• "):
                     r.text = "◦ " + r.text[2:]
         if lines:
-            lines.append("")
-        lines.extend(r.text for r in kept if r.text.strip())
+            lines.append(("", None))
+        lines.extend((r.text.replace("­", ""), (round(r.size, 1), r.bold)) for r in kept if r.text.strip())
     return lines

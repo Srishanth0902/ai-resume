@@ -19,10 +19,12 @@ function WithHidden({ text }) {
   ));
 }
 
-function Line({ text, nested }) {
+function Line({ text, nested, heads }) {
   let kind = "line";
   let clean = text;
-  if (SUB_BULLET.test(text)) {
+  if (heads) {
+    kind = "line entry"; // a plain line with bullet points under it is a project / role title
+  } else if (SUB_BULLET.test(text)) {
     kind = "line bullet sub";
     clean = text.replace(SUB_BULLET, "");
   } else if (TOP_BULLET.test(text)) {
@@ -40,6 +42,36 @@ function Line({ text, nested }) {
 }
 
 const isTableRow = (l) => (l.match(/ \| /g) || []).length >= 2;
+const SKILL_ROW = /^([A-Za-z][\w &/'’+.-]{1,30}?)\s*:\s*(.+)$/;
+const splitSkills = (s) => s.split(/[,;|•·]/).map((x) => x.trim().replace(/\.$/, "")).filter(Boolean);
+
+// "Languages: Python, C++" rows keep their labels; an unlabelled list becomes one cloud of chips
+function SkillsBody({ lines, chips }) {
+  const rows = lines.map((l) => l.replace(TOP_BULLET, "").replace(SUB_BULLET, "").match(SKILL_ROW));
+  if (rows.filter(Boolean).length < 2) {
+    return (
+      <div className="chips">
+        {chips.map((k) => <span key={k} className="chip">{k}</span>)}
+      </div>
+    );
+  }
+  return (
+    <div className="skill-rows">
+      {lines.map((l, i) => {
+        const m = rows[i];
+        const items = splitSkills(m ? m[2] : l.replace(TOP_BULLET, "").replace(SUB_BULLET, ""));
+        return (
+          <div key={i} className="skill-row">
+            <span className="skill-label">{m ? m[1] : ""}</span>
+            <div className="chips">
+              {items.map((k, j) => <span key={j} className="chip"><WithHidden text={k} /></span>)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function Table({ rows }) {
   const cells = rows.map((r) => r.split(" | "));
@@ -73,7 +105,10 @@ function SectionBody({ lines }) {
       i--;
       out.push(<Table key={`t${i}`} rows={rows} />);
     } else {
-      out.push(<Line key={i} text={lines[i]} nested={nested} />);
+      const next = lines[i + 1] || "";
+      const plain = !TOP_BULLET.test(lines[i]) && !SUB_BULLET.test(lines[i]);
+      const heads = plain && lines[i].length < 160 && (TOP_BULLET.test(next) || SUB_BULLET.test(next));
+      out.push(<Line key={i} text={lines[i]} nested={nested} heads={heads} />);
     }
   }
   return out;
@@ -110,11 +145,7 @@ function Profile({ candidate }) {
         <section key={s.title} className="profile-section">
           <h2>{s.title}</h2>
           {s.key === "skills" && profile.skills.length > 0 ? (
-            <div className="chips">
-              {profile.skills.map((k) => (
-                <span key={k} className="chip">{k}</span>
-              ))}
-            </div>
+            <SkillsBody lines={s.lines} chips={profile.skills} />
           ) : (
             <SectionBody lines={s.lines} />
           )}

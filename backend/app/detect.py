@@ -60,7 +60,7 @@ HEADING_WORDS = {
     "your", "url", "id",
 }
 
-# Resume bullets start with action verbs; spaCy sometimes reads "Spearheaded Bag of Delight" as a name.
+# Resume bullets start with action verbs; spaCy sometimes reads "Spearheaded Kindle Corner" as a name.
 ACTION_VERBS = {
     "achieved", "addressed", "analyzed", "analysed", "architected", "assisted", "automated", "awarded", "built",
     "championed", "collaborated", "completed", "conducted", "configured", "contributed", "coordinated", "created",
@@ -103,6 +103,9 @@ COMMON_WORDS = {
     "united", "states", "national", "international", "global", "digital", "student", "students",
     "trainee", "associate", "senior", "junior", "head", "member", "volunteer", "coordinator",
     "president", "secretary", "captain", "public", "private", "limited", "ltd", "pvt", "inc", "llc",
+    "labs", "lab", "corp", "corporation", "technologies", "tech", "group", "studio", "studios", "ventures",
+    "capital", "consulting", "partners", "foundation", "bank", "motors", "industries", "enterprises", "media",
+    "software", "logistics", "pharma", "pharmaceuticals", "infotech", "systems", "global", "holdings",
     "english", "hindi", "telugu", "tamil", "kannada", "malayalam", "marathi", "bengali", "gujarati",
     "punjabi", "urdu", "odia", "french", "german", "spanish", "japanese", "mandarin", "arabic",
 }
@@ -153,7 +156,7 @@ RE_RELATIVE_NAME = re.compile(
     + _SEP + r"([^\n|]{2,60}?)[ \t]*$"
 )
 RE_RELATION_PREFIX = re.compile(r"\b([SDWC]/[Oo])\.?[ \t]+((?:[A-Z][\w.]*[ \t]?){1,4})")
-# not "Sri"/"Shri": they start many Indian company and school names ("Sri Krishna Pharmaceuticals")
+# not "Sri"/"Shri": they start many Indian company and school names ("Sri Lakshmi Traders")
 RE_TITLE = re.compile(r"\b(?:Mr|Mrs|Ms|Miss|Smt|Kumari|Kum)\.?(?=[ \t]+[A-Z])")
 RE_PRONOUN = re.compile(r"\b(?i:he|she|him|her|his|hers|himself|herself)\b")
 RE_NAME_LABELLED = re.compile(
@@ -167,12 +170,15 @@ RE_ADDRESS_LABELLED = re.compile(
     + _SEP + r"([^\n|]{2,120}?)[ \t]*$"
 )
 RE_PINCODE_CITY = re.compile(r"\b[A-Z][a-zA-Z]+[ \t]*[\-\u2013,][ \t]*\d{3}[ ]?\d{3}\b")
+_INSTITUTION_WORDS = ["University", "College", "Institute", "School", "Academy", "Polytechnic", "Vidyalaya",
+                      "Vidyalayam", "Kalasala", "Kalashala", "Mahavidyalaya", "Vidyapeeth", "Vidyapith",
+                      "Vidyapeetham", "Gurukul"]
 RE_INSTITUTION = re.compile(
     r"\b(?:[A-Z][\w&.'\-]*[ \t]+){0,6}"
-    r"(?:University|College|Institute|School|Academy|Polytechnic|Vidyalaya|Vidyalayam|Kalasala|Kalashala"
-    r"|Mahavidyalaya|Vidyapeeth|Vidyapith|Vidyapeetham|Gurukul)"
-    r"(?:[ \t]+(?:of|for)(?:[ \t]+(?:[A-Z][\w&.'\-]*|and|&)){1,6})?"
-    r"(?:,[ \t]*[A-Z][a-z]+(?![ \t]*[A-Z][a-z]))?"  # plus a trailing ", City"
+    # Title Case or ALL CAPS ("CORNELL UNIVERSITY"), but never lowercase "university students"
+    r"(?:" + "|".join(w for word in _INSTITUTION_WORDS for w in (word, word.upper())) + r")\b"
+    r"(?:[ \t]+(?:of|for|OF|FOR)(?:[ \t]+(?:[A-Z][\w&.'\-]*|and|AND|&)){1,6})?"
+    r"(?:,[ \t]*[A-Z][a-z]+\b(?![ \t]*[A-Z][a-z]))?"  # plus a trailing ", City" (a whole word, not "Ph" of "PhD")
 )
 RE_OTHER_DATE = re.compile(
     r"\b(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?[ \t]+(?:19|20)\d{2}"
@@ -360,10 +366,35 @@ def _spacy_detections(text: str) -> list[Detection]:
             if value and part not in ("\n", " | "):
                 start = offset + part.find(value)
                 det = _classify_spacy(value, ent.label_, start)
+                if det and det.category == "name" and not _person_context(text, start, value):
+                    det = None  # "Ledger Visualiser", "Fintech Labs": title-case words, not a person
                 if det:
                     out.append(det)
             offset += len(part)
     return out
+
+
+RE_PERSON_CUE = re.compile(
+    r"(?:\b(?:Prof|Dr|Mr|Mrs|Ms|Miss|Sir|Shri|Smt)\.?|\b(?:advis[eo]r|mentor|guide|supervisor|manager|reference"
+    r"|referee|reporting to|reported to|under|with|worked with|guided by|supervised by|by)\b)\s*:?\s*$",
+    re.IGNORECASE,
+)
+RE_INITIALED_NAME = re.compile(r"^(?:[A-Z]\.\s?){1,2}[A-Z][a-z]+|^[A-Z][a-z]+\s(?:[A-Z]\.\s?){1,2}[A-Z][a-z]+")
+
+
+def _person_context(text: str, start: int, value: str) -> bool:
+    """spaCy guesses PERSON for many title-case phrases in resumes (project, company and event names).
+    Outside the header, only trust it when something marks a person: a title or role word right
+    before ("Prof. ...", "Advisor: ..."), an initial ("A. Jain"), or an author list."""
+    if text.count("\n", 0, start) < 2:  # the top lines, where the candidate's own name sits
+        return True
+    before = text[max(0, start - 30):start]
+    if RE_PERSON_CUE.search(before) or RE_INITIALED_NAME.match(value):
+        return True
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", start)
+    line = text[line_start:line_end if line_end != -1 else len(text)]
+    return bool(re.search(r"\b[A-Z]\.\s?[A-Z][a-z]+,?\s+(?:and\s+)?", line) and line.count(",") >= 2)
 
 
 def _classify_spacy(value: str, label: str, start: int) -> Detection | None:
@@ -375,7 +406,7 @@ def _classify_spacy(value: str, label: str, start: int) -> Detection | None:
     if any(t.strip(".,").upper() in INSTITUTION_ABBRS for t in tokens):
         return None  # "NIT Trichy" is a college, not a person
     if label == "PERSON":
-        # one-word PERSON hits on resumes are mostly event or product names ("Festember")
+        # one-word PERSON hits on resumes are mostly event or product names ("Techfest")
         if len(tokens) >= 2 and _looks_like_name(value) and not any(t.lower().strip(".,") in COMMON_WORDS | ACTION_VERBS for t in tokens):
             return Detection(value, "name", start, start + len(value), "spacy")
         return None
@@ -402,6 +433,35 @@ def _propagate_names(text: str, detections: list[Detection]) -> list[Detection]:
         for variant in {tok.title(), tok.upper(), tok}:
             for m in re.finditer(rf"(?<![\w@.]){re.escape(variant)}(?![\w@])", text):
                 out.append(Detection(m.group(0), "name", m.start(), m.end(), "propagated"))
+    return out
+
+
+def _name_handles(text: str, detections: list[Detection]) -> list[Detection]:
+    """Usernames built from the candidate's name: "AshaRao", "asha.rao", "asharao42".
+
+    Icon-based contact lines (a LinkedIn or GitHub logo followed by a username) carry no keyword
+    like "linkedin", so the username itself is what has to be recognised."""
+    tokens = set()
+    for d in detections:
+        if d.category == "name" and d.source in ("heuristic", "label"):
+            for tok in d.text.split():
+                bare = tok.strip(".,'’").lower()
+                if len(bare) >= 4 and bare.isalpha() and bare not in HEADING_WORDS:
+                    tokens.add(bare)
+    if not tokens:
+        return []
+    pattern = re.compile(
+        # an optional leading "@" catches social handles such as "@debarghya_das"
+        r"(?<![\w@./-])@?[A-Za-z0-9._\-]*(?:" + "|".join(map(re.escape, sorted(tokens))) + r")[A-Za-z0-9._\-]*(?![\w@])",
+        re.IGNORECASE,
+    )
+    out = []
+    for m in pattern.finditer(text):
+        word = m.group(0).strip("._-")
+        if word.lower() in tokens:
+            continue  # the plain name itself is handled by the name detectors
+        start = m.start() + m.group(0).find(word)
+        out.append(Detection(word, "url", start, start + len(word), "handle"))
     return out
 
 
@@ -445,6 +505,7 @@ def build_matcher(terms: list[str]) -> re.Pattern | None:
 def detect_pii(text: str) -> list[Finding]:
     detections = _regex_detections(text) + _header_name(text) + _spacy_detections(text)
     detections += _propagate_names(text, detections)
+    detections += _name_handles(text, detections)
     resolved = _resolve_overlaps(detections)
 
     # collapse to unique terms; a term keeps the category of its highest-priority detection

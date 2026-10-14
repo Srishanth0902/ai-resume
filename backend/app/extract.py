@@ -9,7 +9,7 @@ import pymupdf as fitz
 from docx import Document
 from docx.oxml.ns import qn
 
-from .pdf_layout import RE_DATE_CELL, document_lines
+from .pdf_layout import RE_DATE_CELL, document_rows
 
 MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
 
@@ -25,6 +25,8 @@ class Extraction:
     page_count: int = 1
     image_count: int = 0
     warnings: list[str] = field(default_factory=list)
+    # (font size, bold) for each line of `text`, when the source format has that information
+    styles: list | None = None
 
 
 def detect_kind(filename: str, data: bytes) -> str:
@@ -64,15 +66,22 @@ def _extract_pdf(data: bytes) -> Extraction:
     images = 0
     for page in doc:
         images += sum(1 for info in page.get_image_info() if _is_photo_sized(info["bbox"], page.rect))
+    styles = None
     try:
         # reading order rebuilt from the page geometry (tables, columns, bullets, footers)
-        text = "\n".join(document_lines(doc)).strip()
+        rows = document_rows(doc)
+        while rows and not rows[0][0].strip():
+            rows.pop(0)
+        while rows and not rows[-1][0].strip():
+            rows.pop()
+        text = "\n".join(t for t, _ in rows)
+        styles = [st for _, st in rows]
     except Exception:
         text = ""
     if not text:
-        text = "\n\n".join(p.get_text("text").strip() for p in doc).strip()
+        text, styles = "\n\n".join(p.get_text("text").strip() for p in doc).strip(), None
 
-    result = Extraction(text=text, kind="pdf", page_count=doc.page_count, image_count=images)
+    result = Extraction(text=text, kind="pdf", page_count=doc.page_count, image_count=images, styles=styles)
     if not text.strip():
         result.warnings.append(
             "No selectable text was found. This looks like a scanned PDF, which needs OCR before "

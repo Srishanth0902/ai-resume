@@ -67,11 +67,11 @@ ALIAS_TO_KEY = {alias: key for key, aliases in SECTION_ALIASES.items() for alias
 KEYWORD_RULES = [
     ("personal", r"personal (?:detail|information|data|info|profile|particular)|bio ?data|other details"
                  r"|additional (?:information|details)|family"),
-    ("contact", r"contact"),
+    ("contact", r"contact|\blinks?\b|social|profiles\b|online presence|find me"),
     ("declaration", r"declaration|signature"),
     ("references", r"referen|referee"),
     ("hobbies", r"hobb|interests"),
-    ("achievements", r"achiev|award|honou?r|scholarship|accomplish|recognition"),
+    ("achievements", r"achiev|award|honou?r|scholarship|accomplish|recognition|proud|highlights"),
     ("projects", r"project"),
     ("experience", r"experience|internship|employment|work history|career history"),
     ("leadership", r"responsibilit|leadership|positions?\b"),
@@ -81,7 +81,7 @@ KEYWORD_RULES = [
     ("certifications", r"certif|course|training|licen"),
     ("education", r"education|qualification|academic|schooling"),
     ("summary", r"summary|objective|profile|about"),
-    ("publications", r"publication|research|paper"),
+    ("publications", r"publication|research|paper|patent|talks?\b|presentation|conference"),
     ("strengths", r"strength"),
 ]
 PERSONAL_WORDS = re.compile(
@@ -104,6 +104,7 @@ RE_YEAR_RANGE = re.compile(
 )
 RE_SINGLE_YEAR = re.compile(rf"\b(?:{_MONTH}[ \t]+)?(?:19|20)\d{{2}}\b|\b\d{{1,2}}/(?:19|20)\d{{2}}\b")
 RE_INSTITUTION_ABBR = re.compile(r"\b(?:IIT|NIT|IIIT|BITS|VIT|SRM|IIM|IISc|JNTU|JNTUH|JNTUK|MIT)\b(?:[ ,\-]+[A-Z][a-z]+)?")
+RE_CITY_STATE = re.compile(r"\b[A-Z][a-z]+(?:[ \t][A-Z][a-z]+)?,[ \t]?(?:[A-Z]{2}|India|USA|UK)\b")  # "Princeton, NJ"
 RE_BULLET = re.compile(r"^[•●▪◦\-–*]\s*")
 SMALL_WORDS = {"and", "of", "the", "in", "for", "&", "to", "on", "at", "with", "a", "an"}
 
@@ -142,7 +143,10 @@ def _looks_like_heading(text: str) -> bool:
 
 
 def classify_heading(line: str):
-    """Return (key, title, rest-of-line) if the line starts a section."""
+    """Return (key, title, rest-of-line, how) if the line starts a section.
+
+    `how` is "alias" for a known heading name, or "keyword" / "caps" for a guess that the
+    document's heading style has to confirm."""
     if RE_BULLET.match(line.strip()):
         return None  # a bulleted line is content, never a heading
     stripped = line.strip().strip("•*#=_●▪").strip()
@@ -156,43 +160,96 @@ def classify_heading(line: str):
     for head, rest in candidates:
         key = ALIAS_TO_KEY.get(_norm_heading(head))
         if key:
-            return key, head.strip(" :"), rest.strip()
+            return key, head.strip(" :"), rest.strip(), "alias"
     if _looks_like_heading(stripped):
         key = _keyword_key(stripped)
         if key:
-            return key, stripped.rstrip(":").strip(), ""
+            return key, stripped.rstrip(":").strip(), "", "keyword"
     # an unrecognised ALL-CAPS heading such as "HACKATHONS" (but not a skill like "SQL" or "AWS")
     if (re.fullmatch(r"[A-Z][A-Z &/'’]{2,40}:?", stripped) and len(stripped.split()) <= 4
             and stripped.rstrip(":").lower() not in TECH_TERMS and len(stripped.rstrip(":")) >= 5):
         title = stripped.rstrip(":").title()
-        return ("personal" if PERSONAL_WORDS.search(stripped) else "other"), title, ""
+        return ("personal" if PERSONAL_WORDS.search(stripped) else "other"), title, "", "caps"
     return None
 
 
-def split_sections(text: str):
+def _same_style(a, b) -> bool:
+    return a is not None and b is not None and abs(a[0] - b[0]) <= 0.6 and a[1] == b[1]
+
+
+def _heading_styles(lines: list[str], styles: list | None) -> list:
+    """Font styles this document uses for its section headings, learned from headings with a
+    known name ("Education", "SKILLS"). Empty when headings look just like body text."""
+    if not styles:
+        return []
+    counts: dict = {}
+    for line, st in zip(lines, styles):
+        if line.strip() and st is not None:
+            counts[st] = counts.get(st, 0) + 1
+    if not counts:
+        return []
+    body = max(counts, key=counts.get)
+    learned = []
+    seen_first = False
+    for line, st in zip(lines, styles):
+        if not line.strip():
+            continue
+        if not seen_first:
+            seen_first = True  # the name line
+            continue
+        h = classify_heading(line)
+        if h and h[3] == "alias" and not h[2] and st is not None and not _same_style(st, body):
+            if not any(_same_style(st, s) for s in learned):
+                learned.append(st)
+    return learned
+
+
+def _styled_heading(line: str):
+    """A line in the heading style that no rule recognised ("A DAY OF MY LIFE", "LINKS")."""
+    t = line.strip().rstrip(":").strip()
+    if RE_BULLET.match(t) or re.search(r"[\d@|]", t) or not 1 <= len(t.split()) <= 7 or len(t) > 60:
+        return None
+    key = _keyword_key(t) or ("personal" if PERSONAL_WORDS.search(t) else "other")
+    return key, t.title() if t.isupper() else t, "", "style"
+
+
+def split_sections(text: str, styles: list | None = None):
     """-> (header_lines, [ {key, title, lines} ])"""
     header: list[str] = []
     sections: list[dict] = []
     current = None
-    for raw in text.splitlines():
+    lines = text.splitlines()
+    if styles is not None and len(styles) != len(lines):
+        styles = None
+    learned = _heading_styles(lines, styles)
+    for idx, raw in enumerate(lines):
         line = raw.strip()
         if not line:
             continue
+        style = styles[idx] if styles else None
         if not header and current is None:
             # the very first line is the candidate's name (or "RESUME"), never a section heading
-            if _norm_heading(line) in TITLE_ONLY:
+            if _norm_heading(line) in TITLE_ONLY or re.match(r"(?i)^(last\s+)?updated\b|^page\s+\d", line):
                 continue
             header.append(line)
             continue
         heading = classify_heading(line)
-        if heading and heading[0] == "other" and current is None:
+        if learned and style is not None:
+            if heading and heading[3] in ("keyword", "caps") and not any(_same_style(style, s) for s in learned):
+                heading = None  # heading-like words styled as an entry ("CORNELL UNIVERSITY", "GRADUATE")
+            elif not heading and any(_same_style(style, s) for s in learned):
+                heading = _styled_heading(line)
+        if heading and heading[0] == "other" and current is None and heading[3] != "style":
             heading = None  # an ALL-CAPS line in the header block is a name or title, not a section
         if heading and current is None and heading[2] and heading[0] not in KEPT:
             heading = None  # "Contact: +91 ..." in the header block is a detail line, not a section
-        if heading and current is not None and heading[0] == current["key"] and not heading[2]:
+        if (heading and current is not None and heading[0] == current["key"] and not heading[2]
+                and (heading[0] not in ("other", "personal") or heading[1].lower() == current["title"].lower())):
             heading = None  # a sub-heading such as "Sport Activities:" inside Extracurricular Activities
+        if heading and heading[2] and current is not None and current["key"] == "skills":
+            heading = None  # "Languages: Python, C++" or "Coursework: DBMS" are rows of the skills block
         if heading:
-            key, title, rest = heading
+            key, title, rest, _how = heading
             title = title.title() if title.isupper() else title
             current = {"key": key, "title": TITLES.get(key, title), "lines": []}
             sections.append(current)
@@ -207,6 +264,16 @@ def split_sections(text: str):
     return header, sections
 
 
+def _acronym(name: str) -> str:
+    letters = []
+    for word in re.findall(r"[A-Za-z][A-Za-z'’.]*", name):
+        bare = word.strip(".'’")
+        if not bare or bare.lower() in {"of", "and", "the", "for", "in", "at"}:
+            continue
+        letters.append(bare if bare.isupper() and len(bare) > 1 else bare[0].upper())
+    return "".join(letters)
+
+
 class Scrubber:
     def __init__(self, text: str, findings: list[Finding], options: ProfileOptions, header_text: str = ""):
         header_text = header_text.lower()
@@ -214,13 +281,20 @@ class Scrubber:
         def wanted(f: Finding) -> bool:
             if f.category not in SCRUB_CATEGORIES:
                 return False
-            # spaCy's place guesses in the body are often event or NGO names ("Choreonite");
+            # spaCy's place guesses in the body are often event or NGO names ("Rhythmica");
             # hide them only when the same place also sits in the personal header block
             if f.category == "location" and f.sources == ["spacy"]:
                 return f.text.lower() in header_text
             return True
 
         terms = {f.text: f.category for f in findings if wanted(f)}
+        # in the education section a place ("Princeton, NJ") points straight at the school
+        self.edu_places = None
+        if options.hide_institutions:
+            self.edu_places = build_matcher([
+                f.text for f in findings if f.category == "location"
+                and not re.search(r"(?i)scholar|fellow|award|prize|medal|grant|honou?r", f.text)
+            ])
         if options.hide_institutions:
             for rx in (RE_INSTITUTION, RE_INSTITUTION_ABBR):
                 for m in rx.finditer(text):
@@ -229,6 +303,13 @@ class Scrubber:
                         terms.setdefault(value, "organization")
         self.categories = {normalize_term(t): c for t, c in terms.items()}
         self.matcher = build_matcher(list(terms))
+        # "ABC Valley Institute of Engineering and Technology" is also written "ABCVIET"
+        self.acronyms = []
+        if options.hide_institutions:
+            for term, cat in terms.items():
+                acro = _acronym(term) if cat == "organization" else ""
+                if len(acro) >= 4:
+                    self.acronyms.append(re.compile(r"\b" + r"\s?".join(map(re.escape, acro)) + r"\b"))
         self.count = 0
 
     def _replace(self, m: re.Match) -> str:
@@ -239,9 +320,18 @@ class Scrubber:
             return neutral.capitalize() if word[0].isupper() else neutral
         return HIDDEN
 
-    def __call__(self, line: str, hide_years: bool = False) -> str:
+    def __call__(self, line: str, hide_years: bool = False, education: bool = False) -> str:
         if self.matcher is not None:
             line = self.matcher.sub(self._replace, line)
+        if education:
+            if self.edu_places is not None:
+                line, n = self.edu_places.subn(HIDDEN, line)
+                self.count += n
+            line, n = RE_CITY_STATE.subn(HIDDEN, line)
+            self.count += n
+        for rx in self.acronyms:
+            line, n = rx.subn(HIDDEN, line)
+            self.count += n
         if hide_years:
             line, n1 = RE_YEAR_RANGE.subn(HIDDEN, line)
             line, n2 = RE_SINGLE_YEAR.subn(HIDDEN, line)
@@ -264,15 +354,44 @@ def _split_skills(lines: list[str]) -> list[str]:
     return skills
 
 
+HUMAN_LANGUAGES = {
+    "english", "hindi", "telugu", "tamil", "kannada", "malayalam", "marathi", "bengali", "bangla", "gujarati",
+    "punjabi", "urdu", "odia", "oriya", "assamese", "konkani", "sanskrit", "french", "german", "spanish",
+    "japanese", "mandarin", "chinese", "korean", "arabic", "russian", "italian", "portuguese", "dutch",
+}
+
+
+def _spoken_languages(values: str) -> bool:
+    names = [re.sub(r"\(.*?\)", "", v).strip().lower() for v in re.split(r"[,/|;]| and ", values) if v.strip()]
+    return bool(names) and sum(n.split(" ")[0] in HUMAN_LANGUAGES for n in names) >= max(1, len(names) // 2 + 1)
+
+
 def _reroute_labelled_lines(sections: list[dict]) -> list[dict]:
     """A skills block often carries "Certifications: ..." or "Languages: ..." rows; give each its own section."""
     out: list[dict] = []
     for s in sections:
         keep = {**s, "lines": []}
         out.append(keep)
-        for line in s["lines"]:
+        lines = list(s["lines"])
+        if s["key"] == "skills":
+            # a label on its own line above its list: "PROGRAMMING" / "Python, Scala" -> "Programming: Python, Scala"
+            merged: list[str] = []
+            for line in lines:
+                prev = merged[-1] if merged else ""
+                if (prev and ("," in line or "•" in line) and ":" not in prev and "," not in prev
+                        and not RE_BULLET.match(prev) and len(prev.split()) <= 4 and not re.search(r"\d", prev)):
+                    label = prev.rstrip(":").strip()
+                    merged[-1] = f"{label.title() if label.isupper() else label}: {line}"
+                else:
+                    merged.append(line)
+            lines = merged
+        for line in lines:
             m = re.match(r"^(?:[•●▪◦\-–*]\s*)?([A-Za-z &/'’]{3,40}?)\s*:\s*(.+)$", line)
             key = _keyword_key(m.group(1)) if m and s["key"] == "skills" else None
+            if key == "languages" and not _spoken_languages(m.group(2)):
+                key = None  # "Languages: Python, C++" lists programming languages
+            if key == "certifications" and re.search(r"coursework|subjects", m.group(1), re.I):
+                key = None  # relevant coursework reads fine as part of the skills block
             if key and key not in ("skills", s["key"]):
                 out.append({"key": key, "title": TITLES.get(key, m.group(1).strip()), "lines": [m.group(2).strip()]})
             else:
@@ -280,11 +399,26 @@ def _reroute_labelled_lines(sections: list[dict]) -> list[dict]:
     return out
 
 
+def _title_like(line: str) -> bool:
+    """A job headline ("Data Analyst", "AI/ML STUDENT | PYTHON") rather than handles or icon junk."""
+    if re.search(r"[^\w\s&/|,.\-–—()+#'’:]", line) or re.search(r"[^\x00-\u024f]", line):
+        return False
+    if re.search(r"(?i)\b(last\s+)?updated\b|\bpage\s+\d", line):
+        return False  # "Last updated in Mar 2026" is a template stamp, not a headline
+    parts = [p.strip() for p in line.split("|") if p.strip()]
+    # a username such as "AshaRao" or "asharao42": camelCase or letters glued to digits
+    if any(re.fullmatch(r"[a-z]+[A-Z]\w*|[A-Za-z]+\d+|\w+[._]\w+", p) for p in parts):
+        return False
+    return 1 <= len(re.findall(r"[A-Za-z]+", line)) <= 12
+
+
 def build_profile(text: str, findings: list[Finding], options: ProfileOptions | None = None,
-                  image_count: int = 0):
-    """-> (profile, identity). The profile is safe to show before a decision; identity is not."""
+                  image_count: int = 0, styles: list | None = None):
+    """-> (profile, identity). The profile is safe to show before a decision; identity is not.
+
+    `styles` (font size, bold) per line lets section headings be told apart from entries."""
     options = options or ProfileOptions()
-    header, sections = split_sections(text)
+    header, sections = split_sections(text, styles)
     sections = _reroute_labelled_lines(sections)
     scrub = Scrubber(text, findings, options, "\n".join(header))
 
@@ -293,7 +427,7 @@ def build_profile(text: str, findings: list[Finding], options: ProfileOptions | 
     for i, line in enumerate(header):
         has_pii = scrub.matcher is not None and scrub.matcher.search(line)
         digits = sum(ch.isdigit() for ch in line)
-        if i == 0 or has_pii or CONTACT_HINT.search(line) or digits >= 5:
+        if i == 0 or has_pii or CONTACT_HINT.search(line) or digits >= 5 or not _title_like(line):
             header_hidden.append(line)
         else:
             headline_parts.append(scrub(line))
@@ -302,12 +436,14 @@ def build_profile(text: str, findings: list[Finding], options: ProfileOptions | 
     for s in sections:
         if s["key"] in KEPT:
             hide_years = options.hide_education_years and s["key"] == "education"
-            lines = [scrub(l, hide_years) for l in s["lines"]]
+            education = options.hide_institutions and s["key"] == "education"
+            lines = [scrub(l, hide_years, education) for l in s["lines"]]
             lines = [l for l in lines if l and l != HIDDEN]
             if not lines:
                 continue
             if s["key"] == "other":
-                kept.setdefault(("other", s["title"]), []).extend(lines)
+                title = scrub(s["title"])  # an unrecognised heading could itself name a college or person
+                kept.setdefault(("other", "Other" if HIDDEN in title else title), []).extend(lines)
             else:
                 kept.setdefault((s["key"], s["title"]), []).extend(lines)
         else:

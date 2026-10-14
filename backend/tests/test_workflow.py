@@ -86,7 +86,7 @@ def test_heading_classification(line, key):
 
 @pytest.mark.parametrize("line", ["Sales dashboard - Interactive analytics", "Software Intern, Nimbus Analytics", "Python",
                                   "Machine Learning – Online Certification", "• Built Machine Learning Projects",
-                                  "Head, Quality Management Team, Festember:"])
+                                  "Head, Quality Management Team, Techfest:"])
 def test_content_lines_are_not_headings(line):
     assert classify_heading(line) is None
 

@@ -189,7 +189,8 @@ def add_candidate(
 
     findings = detect_pii(extraction.text)
     options = ProfileOptions(hide_institutions=hide_institutions, hide_education_years=hide_education_years)
-    profile, identity = build_profile(extraction.text, findings, options, extraction.image_count)
+    profile, identity = build_profile(extraction.text, findings, options, extraction.image_count,
+                                      styles=extraction.styles)
     code = store.create(profile, identity, data, file.filename or f"resume.{kind}", kind)
     # Only the code goes back: the uploader's screen never displays who the candidate is.
     return {"code": code, "duplicate": False, "sections": len(profile["sections"]), "warnings": profile["warnings"]}

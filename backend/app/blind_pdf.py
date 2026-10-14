@@ -40,7 +40,13 @@ def _section_html(lines: list[str]) -> list[str]:
             out.append("<table>" + "".join(rows) + "</table>")
             table.clear()
 
-    for line in lines:
+    for idx, line in enumerate(lines):
+        nxt = lines[idx + 1] if idx + 1 < len(lines) else ""
+        heads = (not re.match(r"^[-•*●▪–◦]", line) and len(line) < 160 and bool(re.match(r"^[-•*●▪–◦]", nxt)))
+        if heads and line.count(" | ") < 2:
+            flush_table()
+            out.append(f'<p class="entry">{escape(line)}</p>')
+            continue
         if line.count(" | ") >= 2:
             table.append(line.split(" | "))
             continue
