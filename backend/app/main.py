@@ -26,7 +26,9 @@ from .extract import UnsupportedFile, detect_kind, extract
 from .profile import ProfileOptions, build_profile
 from .redact import RedactItem, redact_document, redact_text, split_terms
 
-MAX_BYTES = 10 * 1024 * 1024
+# Vercel Functions reject request bodies over 4.5 MB, so uploads are capped at 4 MB there.
+MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", 4 if os.environ.get("VERCEL") else 10))
+MAX_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 MEDIA_TYPES = {
     "pdf": "application/pdf",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -55,7 +57,7 @@ class RedactOptions(BaseModel):
 def _read(file: UploadFile) -> tuple[bytes, str]:
     data = file.file.read(MAX_BYTES + 1)
     if len(data) > MAX_BYTES:
-        raise HTTPException(413, "File is larger than 10 MB.")
+        raise HTTPException(413, f"File is larger than {MAX_UPLOAD_MB} MB.")
     if not data:
         raise HTTPException(400, "The uploaded file is empty.")
     try:
@@ -64,9 +66,17 @@ def _read(file: UploadFile) -> tuple[bytes, str]:
         raise HTTPException(415, str(exc)) from exc
 
 
+@app.exception_handler(RuntimeError)
+def configuration_error(_request, exc: RuntimeError):
+    # e.g. DEIDENT_KEY missing on Vercel: say what to fix instead of a bare 500
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse({"detail": str(exc)}, status_code=503)
+
+
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "nlp_model": "en_core_web_sm" if nlp_available() else None}
+    return {"status": "ok", "nlp_model": "en_core_web_sm" if nlp_available() else None, "max_upload_mb": MAX_UPLOAD_MB}
 
 
 @app.get("/api/categories")

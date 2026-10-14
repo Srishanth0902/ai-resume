@@ -28,7 +28,6 @@ cd backend
 python -m venv .venv
 .venv\Scripts\activate            # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-python -m spacy download en_core_web_sm
 
 # frontend (one time)
 cd ../frontend
@@ -48,7 +47,37 @@ samples. Then open the candidate from **Candidates** to review it.
 For frontend development with hot reload, run the backend as above, then run `npm run dev` in
 `frontend` and open http://localhost:5173.
 
-Run the tests from `backend`: `python -m pytest`
+Run the tests from `backend`: `pip install -r requirements-dev.txt`, then `python -m pytest`
+
+## Deploying to Vercel
+
+`vercel.json` deploys the repo as one project with two services on one domain:
+
+| Service    | Root        | Public path | What it is                                        |
+|------------|-------------|-------------|---------------------------------------------------|
+| `frontend` | `frontend/` | `/`         | Vite build of the React app (static)              |
+| `backend`  | `backend/`  | `/api/*`    | FastAPI (`app.main:app`) as a Python function     |
+
+The browser calls `/api/...` on the same origin, so no CORS or service bindings are needed. The
+backend receives the full path (`/api/candidates`), which matches its routes.
+
+Before deploying, set these in the Vercel project's environment variables:
+
+- `DEIDENT_KEY` (**required**): a Fernet key, generated with
+  `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+  Without it the API returns 503, because each function instance would otherwise make its own
+  key and couldn't read the others' data.
+
+Run both services locally the way Vercel does: `vercel dev` (or `vercel dev -L` without logging in).
+
+Limits to know about on Vercel:
+
+- **Storage is temporary.** Functions can only write to `/tmp`, which is per instance and gets wiped,
+  so candidates can disappear or differ between requests. That's fine for a demo; for real use,
+  `store.py` needs a hosted database such as Postgres.
+- **Uploads are capped at 4 MB** (Vercel limits request and response bodies to 4.5 MB). Set
+  `MAX_UPLOAD_MB` to change it.
+- The Python bundle (spaCy, its model and PyMuPDF) is large but under Vercel's 500 MB Python limit.
 
 ## How it works
 

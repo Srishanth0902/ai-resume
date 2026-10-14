@@ -170,3 +170,9 @@ def test_wrapped_pdf_lines_are_joined_into_one_paragraph():
     summary = next(s for s in profile["sections"] if s["key"] == "summary")
     assert len(summary["lines"]) == 1 and summary["lines"][0].endswith("collaborative projects.")
     assert identity["name"] == "YOUR NAME".title()
+
+
+def test_vercel_mode_requires_an_encryption_key(monkeypatch):
+    monkeypatch.setattr(store, "ON_VERCEL", True)
+    res = client.post("/api/candidates", files={"file": ("resume.pdf", SAMPLE_PDF)})
+    assert res.status_code == 503 and "DEIDENT_KEY" in res.json()["detail"]

@@ -17,7 +17,10 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
-_data_dir = Path(os.environ.get("DEIDENT_DATA_DIR", Path(__file__).resolve().parents[1] / "data"))
+ON_VERCEL = bool(os.environ.get("VERCEL"))
+# Vercel functions can only write to /tmp, which is per-instance and temporary.
+_default_dir = Path("/tmp/deident-data") if ON_VERCEL else Path(__file__).resolve().parents[1] / "data"
+_data_dir = Path(os.environ.get("DEIDENT_DATA_DIR", _default_dir))
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS candidates (
@@ -72,6 +75,9 @@ def _connect() -> sqlite3.Connection:
 
 def _fernet() -> Fernet:
     key = os.environ.get("DEIDENT_KEY")
+    if not key and ON_VERCEL:
+        # a key generated per instance could not decrypt data written by another instance
+        raise RuntimeError("Set the DEIDENT_KEY environment variable (a Fernet key) in the Vercel project.")
     if not key:
         key_file = _data_dir / "secret.key"
         _data_dir.mkdir(parents=True, exist_ok=True)

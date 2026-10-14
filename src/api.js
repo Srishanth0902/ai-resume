@@ -15,6 +15,7 @@ const json = (method, body) => ({
   body: JSON.stringify(body),
 });
 
+export const getHealth = () => request("/api/health");
 export const listCandidates = () => request("/api/candidates");
 export const getCandidate = (code) => request(`/api/candidates/${code}`);
 export const decide = (code, decision, note) => request(`/api/candidates/${code}/decision`, json("POST", { decision, note }));

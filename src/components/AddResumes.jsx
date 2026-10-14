@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { uploadResume } from "../api.js";
+import { useEffect, useRef, useState } from "react";
+import { getHealth, uploadResume } from "../api.js";
 
 const ACCEPT = ".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const SAMPLES = [
@@ -14,6 +14,11 @@ export default function AddResumes({ onAdded }) {
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState([]);
   const [options, setOptions] = useState({ hide_institutions: true, hide_education_years: true });
+  const [maxMb, setMaxMb] = useState(null);
+
+  useEffect(() => {
+    getHealth().then((h) => setMaxMb(h.max_upload_mb)).catch(() => {});
+  }, []);
 
   async function process(files) {
     setBusy(true);
@@ -69,7 +74,7 @@ export default function AddResumes({ onAdded }) {
           </svg>
         </div>
         <p className="drop-title">{busy ? "Processing..." : "Drop resumes here or click to browse"}</p>
-        <p className="muted">PDF or DOCX, up to 10 MB each. You can select several files.</p>
+        <p className="muted">PDF or DOCX{maxMb ? `, up to ${maxMb} MB each` : ""}. You can select several files.</p>
       </div>
 
       <div className="options">
